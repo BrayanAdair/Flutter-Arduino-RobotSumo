@@ -5,19 +5,21 @@ import 'dart:typed_data';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Comandos que entiende el firmware del robot sumo (HC-06).
-/// El modo RC del Arduino compara caracteres en minuscula estilo WASD
-/// ('w','a','s','d'); cualquier caracter no reconocido (como 'S' mayuscula)
-/// cae en su rama por defecto y llama a alto(), por lo que sirve como stop.
+/// Comandos de un caracter que entiende el firmware (HC-05/HC-06, L298N).
+/// Ver comandoRC() en ArduinoCodigo/RobotSumo/RobotSumo.ino.
 enum RobotCommand { forward, backward, left, right, stop }
 
 const Map<RobotCommand, String> robotCommandCodes = {
-  RobotCommand.forward: 'w',
-  RobotCommand.backward: 's',
-  RobotCommand.left: 'a',
-  RobotCommand.right: 'd',
+  RobotCommand.forward: 'F',
+  RobotCommand.backward: 'B',
+  RobotCommand.left: 'L',
+  RobotCommand.right: 'R',
   RobotCommand.stop: 'S',
 };
+
+/// Trama analogica del joystick: `<x,y>`, con x (giro, derecha positivo) e
+/// y (avance, adelante positivo) de -100 a 100. Ver leerXY() en el firmware.
+String joystickFrame(int x, int y) => '<$x,$y>';
 
 /// Encapsula toda la logica de conexion Bluetooth SPP y envio de comandos.
 /// Las pantallas solo deben hablar con esta clase, nunca con el plugin directamente.
@@ -102,9 +104,13 @@ class RobotBluetoothService {
   }
 
   /// Envia un unico byte/caracter asociado al comando.
-  void sendCommand(RobotCommand command) {
+  void sendCommand(RobotCommand command) => _send(robotCommandCodes[command]!);
+
+  /// Envia la posicion del joystick para control proporcional.
+  void sendJoystick(int x, int y) => _send(joystickFrame(x, y));
+
+  void _send(String data) {
     if (!isConnected) return;
-    final code = robotCommandCodes[command]!;
-    _connection!.output.add(Uint8List.fromList(utf8.encode(code)));
+    _connection!.output.add(Uint8List.fromList(utf8.encode(data)));
   }
 }

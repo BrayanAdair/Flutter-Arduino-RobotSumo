@@ -158,7 +158,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             padding: EdgeInsets.symmetric(horizontal: 24),
             child: Text(
               'No hay dispositivos Bluetooth emparejados.\n'
-              'Empareja tu modulo HC-06 desde los ajustes de Android primero.',
+              'Empareja tu modulo HC-05/HC-06 desde los ajustes de Android primero.',
               textAlign: TextAlign.center,
             ),
           ),

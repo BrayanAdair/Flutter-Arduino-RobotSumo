@@ -35,7 +35,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
-  # Bluetooth Classic (SPP) para comunicarse con el modulo HC-06
+  # Bluetooth Classic (SPP) para comunicarse con el modulo HC-05/HC-06
   flutter_bluetooth_serial: ^0.4.0
 
   # Permisos de Bluetooth/localizacion en Android 12+

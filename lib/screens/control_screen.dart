@@ -19,9 +19,13 @@ class _ControlScreenState extends State<ControlScreen> {
   StreamSubscription<bool>? _connectionSub;
   Timer? _repeatTimer;
   RobotCommand? _activeCommand;
+  int _joystickX = 0;
+  int _joystickY = 0;
   _ControlMode _mode = _ControlMode.joystick;
 
-  static const _repeatInterval = Duration(milliseconds: 150);
+  // Debe ser bastante menor que TIMEOUT_MS del firmware (500 ms): si no llegan
+  // comandos durante ese tiempo, el robot se detiene por seguridad.
+  static const _repeatInterval = Duration(milliseconds: 100);
 
   @override
   void initState() {
@@ -38,26 +42,51 @@ class _ControlScreenState extends State<ControlScreen> {
 
   @override
   void dispose() {
-    _repeatTimer?.cancel();
+    _stop();
     _connectionSub?.cancel();
     super.dispose();
   }
 
-  /// Envia [command] repetidamente cada 150ms mientras siga activo.
-  /// `null` detiene el envio periodico y manda un stop unico.
+  /// Corta el envio periodico y manda un stop unico.
+  void _stop() {
+    _repeatTimer?.cancel();
+    _repeatTimer = null;
+    _activeCommand = null;
+    _bluetoothService.sendCommand(RobotCommand.stop);
+  }
+
+  /// Envia [command] repetidamente mientras siga activo; `null` equivale a stop.
   void _setCommand(RobotCommand? command) {
+    if (command == null) {
+      _stop();
+      return;
+    }
     if (_activeCommand == command) return;
     _activeCommand = command;
     _repeatTimer?.cancel();
 
-    if (command == null) {
-      _bluetoothService.sendCommand(RobotCommand.stop);
-      return;
-    }
-
     _bluetoothService.sendCommand(command);
     _repeatTimer = Timer.periodic(_repeatInterval, (_) {
       _bluetoothService.sendCommand(command);
+    });
+  }
+
+  /// Actualiza la posicion del joystick. Los arrastres llegan mucho mas rapido
+  /// de lo que transmite el enlace a 9600 baudios, asi que solo se guarda el
+  /// ultimo valor y el temporizador lo envia a ritmo fijo.
+  void _setJoystick(int x, int y) {
+    _joystickX = x;
+    _joystickY = y;
+
+    if (x == 0 && y == 0) {
+      if (_repeatTimer != null) _stop();
+      return;
+    }
+    if (_repeatTimer != null) return;
+
+    _bluetoothService.sendJoystick(x, y);
+    _repeatTimer = Timer.periodic(_repeatInterval, (_) {
+      _bluetoothService.sendJoystick(_joystickX, _joystickY);
     });
   }
 
@@ -73,6 +102,10 @@ class _ControlScreenState extends State<ControlScreen> {
   }
 
   Future<void> _disconnect() async {
+    // Salida manual: el listener no debe avisar de perdida de conexion ni
+    // hacer un segundo pop que dejaria la app sin pantallas.
+    await _connectionSub?.cancel();
+    _stop();
     await _bluetoothService.disconnect();
     if (mounted) Navigator.of(context).pop();
   }
@@ -114,7 +147,7 @@ class _ControlScreenState extends State<ControlScreen> {
             Expanded(
               child: Center(
                 child: isJoystick
-                    ? _Joystick(onCommandChanged: _setCommand)
+                    ? _Joystick(onChanged: _setJoystick)
                     : _DPad(onCommandChanged: _setCommand),
               ),
             ),
@@ -241,14 +274,20 @@ class _StopButton extends StatelessWidget {
   }
 }
 
-/// Modo joystick: cuantiza la posicion del pulgar en una de las 4 direcciones
-/// cardinales (la de mayor magnitud), con una zona muerta central para el
-/// stop. Ver nota de diseno en el mensaje anterior: el firmware solo entiende
-/// 'w'/'a'/'s'/'d', asi que no hay velocidad ni diagonales proporcionales.
-class _Joystick extends StatefulWidget {
-  const _Joystick({required this.onCommandChanged});
+/// Convierte el desplazamiento del pulgar en pantalla (y crece hacia abajo) a
+/// los valores de la trama `<x,y>`: x positivo = derecha, y positivo = adelante.
+@visibleForTesting
+(int, int) joystickToXY(Offset delta, double maxDistance) {
+  int scale(double value) => (value / maxDistance * 100).round().clamp(-100, 100);
+  return (scale(delta.dx), scale(-delta.dy));
+}
 
-  final ValueChanged<RobotCommand?> onCommandChanged;
+/// Modo joystick: control proporcional de velocidad y giro. El firmware mezcla
+/// x e y para calcular la velocidad de cada rueda.
+class _Joystick extends StatefulWidget {
+  const _Joystick({required this.onChanged});
+
+  final void Function(int x, int y) onChanged;
 
   @override
   State<_Joystick> createState() => _JoystickState();
@@ -257,7 +296,7 @@ class _Joystick extends StatefulWidget {
 class _JoystickState extends State<_Joystick> {
   static const double _baseRadius = 100;
   static const double _knobRadius = 40;
-  static const double _deadZone = 0.35;
+  static const double _deadZone = 0.10;
 
   Offset _knobOffset = Offset.zero;
 
@@ -274,19 +313,17 @@ class _JoystickState extends State<_Joystick> {
 
     final magnitude = delta.distance / maxDistance;
     if (magnitude < _deadZone) {
-      widget.onCommandChanged(null);
+      widget.onChanged(0, 0);
       return;
     }
 
-    final command = delta.dx.abs() > delta.dy.abs()
-        ? (delta.dx > 0 ? RobotCommand.right : RobotCommand.left)
-        : (delta.dy > 0 ? RobotCommand.backward : RobotCommand.forward);
-    widget.onCommandChanged(command);
+    final (x, y) = joystickToXY(delta, maxDistance);
+    widget.onChanged(x, y);
   }
 
   void _reset() {
     setState(() => _knobOffset = Offset.zero);
-    widget.onCommandChanged(null);
+    widget.onChanged(0, 0);
   }
 
   @override
